@@ -1,4 +1,4 @@
-import { sendMessage, sendInteractiveButtons } from './whatsapp';
+import { sendWhatsAppMessage } from './whatsapp';
 
 // Customer session storage
 interface CustomerSession {
@@ -12,8 +12,9 @@ const sessions = new Map<string, CustomerSession>();
 
 /**
  * Handle incoming WhatsApp messages
+ * Returns the response message to send back
  */
-export async function handleIncomingMessage(from: string, message: string, senderName: string): Promise<void> {
+export async function handleIncomingMessage(from: string, message: string, senderName: string): Promise<string> {
     const msg = message.toLowerCase().trim();
 
     // Get or create session
@@ -28,32 +29,31 @@ export async function handleIncomingMessage(from: string, message: string, sende
     // Handle based on current stage
     switch (session.stage) {
         case 'greeting':
-            await handleGreeting(from, session);
-            break;
+            return handleGreeting(from, session);
         case 'selecting_price':
-            await handlePriceSelection(from, msg, session);
-            break;
+            return handlePriceSelection(from, msg, session);
         case 'getting_location':
-            await handleLocation(from, message, session);
-            break;
+            return handleLocation(from, message, session);
         case 'confirming':
-            await handleConfirmation(from, msg, session);
-            break;
+            return handleConfirmation(from, msg, session);
         case 'complete':
             // Reset for new order
             session.stage = 'greeting';
             session.price = undefined;
             session.location = undefined;
-            await handleGreeting(from, session);
-            break;
+            return handleGreeting(from, session);
+        default:
+            return handleGreeting(from, session);
     }
 }
 
 /**
  * Send greeting and menu
  */
-async function handleGreeting(from: string, session: CustomerSession): Promise<void> {
-    const greeting = `🥣 *Welcome to WasaWasa!*
+function handleGreeting(from: string, session: CustomerSession): string {
+    session.stage = 'selecting_price';
+
+    return `🥣 *Welcome to WasaWasa!*
 
 Hello ${session.name}! 👋
 
@@ -68,17 +68,12 @@ We serve *authentic Wasawasa* - a delicious Northern Ghanaian dish made from mil
 📍 We deliver anywhere in Wa!
 
 Reply with the amount you want (5, 10, 15, or 20):`;
-
-    await sendMessage(from, greeting);
-    session.stage = 'selecting_price';
 }
 
 /**
  * Handle price selection
  */
-async function handlePriceSelection(from: string, msg: string, session: CustomerSession): Promise<void> {
-    const validPrices = ['5', '10', '15', '20'];
-
+function handlePriceSelection(from: string, msg: string, session: CustomerSession): string {
     // Extract number from message
     const priceMatch = msg.match(/\b(5|10|15|20)\b/);
 
@@ -86,47 +81,47 @@ async function handlePriceSelection(from: string, msg: string, session: Customer
         session.price = priceMatch[1];
         session.stage = 'getting_location';
 
-        await sendMessage(from, `✅ Great choice! *${session.price} GHS* portion.
+        return `✅ Great choice! *${session.price} GHS* portion.
 
-📍 Now, please send your *delivery location* (e.g., "Bamahu, near Total filling station")`);
+📍 Now, please send your *delivery location* (e.g., "Bamahu, near Total filling station")`;
     } else {
-        await sendMessage(from, `❌ Please choose a valid price: *5*, *10*, *15*, or *20* GHS`);
+        return `❌ Please choose a valid price: *5*, *10*, *15*, or *20* GHS`;
     }
 }
 
 /**
  * Handle delivery location
  */
-async function handleLocation(from: string, location: string, session: CustomerSession): Promise<void> {
+function handleLocation(from: string, location: string, session: CustomerSession): string {
     if (location.length < 5) {
-        await sendMessage(from, `📍 Please provide a more detailed location so we can find you!`);
-        return;
+        return `📍 Please provide a more detailed location so we can find you!`;
     }
 
     session.location = location;
     session.stage = 'confirming';
 
-    const orderSummary = `📋 *ORDER SUMMARY*
+    return `📋 *ORDER SUMMARY*
 
 🥣 Item: Wasawasa
 💰 Price: *${session.price} GHS*
 📍 Delivery: *${session.location}*
 
 Is this correct? Reply *YES* to confirm or *NO* to cancel.`;
-
-    await sendMessage(from, orderSummary);
 }
 
 /**
  * Handle order confirmation
  */
-async function handleConfirmation(from: string, msg: string, session: CustomerSession): Promise<void> {
+async function handleConfirmation(from: string, msg: string, session: CustomerSession): Promise<string> {
     if (msg.includes('yes') || msg.includes('confirm') || msg.includes('ok')) {
         // Order confirmed!
         session.stage = 'complete';
 
-        // Send confirmation to customer
-        await sendMessage(from, `🎉 *ORDER CONFIRMED!*
+        // Notify restaurant owner (async, don't wait)
+        notifyRestaurant(from, session);
+
+        // Clear session
+        const response = `🎉 *ORDER CONFIRMED!*
 
 Thank you ${session.name}! Your order is being prepared.
 
@@ -137,24 +132,21 @@ Expected delivery: *30-45 minutes*
 
 For any questions, call: 0209856297
 
-Enjoy your meal! 🥣✨`);
+Enjoy your meal! 🥣✨`;
 
-        // Notify restaurant owner
-        await notifyRestaurant(from, session);
-
-        // Clear session
         sessions.delete(from);
+        return response;
 
     } else if (msg.includes('no') || msg.includes('cancel')) {
         session.stage = 'greeting';
         session.price = undefined;
         session.location = undefined;
 
-        await sendMessage(from, `❌ Order cancelled. 
+        return `❌ Order cancelled. 
 
-Send any message to start a new order! 🥣`);
+Send any message to start a new order! 🥣`;
     } else {
-        await sendMessage(from, `Please reply *YES* to confirm or *NO* to cancel your order.`);
+        return `Please reply *YES* to confirm or *NO* to cancel your order.`;
     }
 }
 
@@ -179,6 +171,10 @@ async function notifyRestaurant(customerPhone: string, session: CustomerSession)
 
 Time: ${new Date().toLocaleString('en-GB', { timeZone: 'Africa/Accra' })}`;
 
-    await sendMessage(restaurantPhone, notification);
-    console.log('📱 Restaurant notified of new order!');
+    try {
+        await sendWhatsAppMessage(restaurantPhone, notification);
+        console.log('📱 Restaurant notified of new order!');
+    } catch (error) {
+        console.error('Failed to notify restaurant:', error);
+    }
 }

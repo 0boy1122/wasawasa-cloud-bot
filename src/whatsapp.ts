@@ -1,100 +1,42 @@
-import axios from 'axios';
+import Twilio from 'twilio';
 
-const WHATSAPP_API_URL = 'https://graph.facebook.com/v18.0';
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const twilioNumber = process.env.TWILIO_WHATSAPP_NUMBER || '+14155238886';
 
-/**
- * Send a text message via WhatsApp Cloud API
- */
-export async function sendMessage(to: string, message: string): Promise<boolean> {
-    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+let client: Twilio.Twilio | null = null;
 
-    if (!phoneNumberId || !accessToken) {
-        console.error('❌ Missing WhatsApp API credentials!');
-        return false;
+function getClient(): Twilio.Twilio {
+    if (!client) {
+        if (!accountSid || !authToken) {
+            throw new Error('Twilio credentials not configured');
+        }
+        client = Twilio(accountSid, authToken);
     }
-
-    try {
-        const response = await axios.post(
-            `${WHATSAPP_API_URL}/${phoneNumberId}/messages`,
-            {
-                messaging_product: 'whatsapp',
-                recipient_type: 'individual',
-                to: to,
-                type: 'text',
-                text: {
-                    preview_url: false,
-                    body: message
-                }
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-
-        console.log(`📤 Message sent to ${to}`);
-        return true;
-    } catch (error: any) {
-        console.error('❌ Failed to send message:', error.response?.data || error.message);
-        return false;
-    }
+    return client;
 }
 
 /**
- * Send interactive buttons (for future enhancement)
+ * Send a WhatsApp message via Twilio
  */
-export async function sendInteractiveButtons(
-    to: string,
-    bodyText: string,
-    buttons: Array<{ id: string; title: string }>
-): Promise<boolean> {
-    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-
-    if (!phoneNumberId || !accessToken) {
-        console.error('❌ Missing WhatsApp API credentials!');
-        return false;
-    }
-
+export async function sendWhatsAppMessage(to: string, message: string): Promise<boolean> {
     try {
-        const response = await axios.post(
-            `${WHATSAPP_API_URL}/${phoneNumberId}/messages`,
-            {
-                messaging_product: 'whatsapp',
-                recipient_type: 'individual',
-                to: to,
-                type: 'interactive',
-                interactive: {
-                    type: 'button',
-                    body: {
-                        text: bodyText
-                    },
-                    action: {
-                        buttons: buttons.map(btn => ({
-                            type: 'reply',
-                            reply: {
-                                id: btn.id,
-                                title: btn.title
-                            }
-                        }))
-                    }
-                }
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
+        const twilioClient = getClient();
 
-        console.log(`📤 Interactive message sent to ${to}`);
+        // Format numbers for Twilio WhatsApp
+        const fromNumber = `whatsapp:${twilioNumber}`;
+        const toNumber = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+
+        const result = await twilioClient.messages.create({
+            body: message,
+            from: fromNumber,
+            to: toNumber
+        });
+
+        console.log(`📤 Message sent to ${to}, SID: ${result.sid}`);
         return true;
     } catch (error: any) {
-        console.error('❌ Failed to send interactive message:', error.response?.data || error.message);
+        console.error('❌ Failed to send message:', error.message);
         return false;
     }
 }
